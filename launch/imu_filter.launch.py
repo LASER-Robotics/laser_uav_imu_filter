@@ -24,6 +24,12 @@ def generate_launch_description():
 
     declared_arguments.append(
         DeclareLaunchArgument(
+            'node_name',
+            default_value='imu_filter',
+            description='Name of the imu filter node instance.'))
+
+    declared_arguments.append(
+        DeclareLaunchArgument(
             'use_sim_time',
             default_value=PythonExpression(['"', os.getenv('REAL_UAV', "true"), '" == "false"']),
             description='Whether use the simulation time.'))
@@ -67,6 +73,7 @@ def generate_launch_description():
 
     # Initialize arguments
     namespace = LaunchConfiguration('namespace')
+    node_name = LaunchConfiguration('node_name')
     use_sim_time = LaunchConfiguration('use_sim_time')
     imu_filter_params_file = LaunchConfiguration('imu_filter_params_file')
     imu_data_united = LaunchConfiguration('imu_data_united')
@@ -79,7 +86,7 @@ def generate_launch_description():
     imu_filter_lifecycle_node = LifecycleNode(
         package='laser_uav_imu_filter',
         executable='imu_filter',
-        name='imu_filter',
+        name=node_name,
         namespace=namespace,
         output='screen',
         parameters=[imu_filter_params_file,
