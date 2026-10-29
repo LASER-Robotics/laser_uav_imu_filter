@@ -1,67 +1,61 @@
 # LASER UAV IMU Filter
 
-This package provides a **ROS 2 lifecycle node** responsible for conditioning and filtering IMU data.
+`laser_uav_imu_filter` filters accelerometer and gyroscope measurements before they reach the LASER UAV System (LUS) estimators. It wraps the IIR and notch filters from `laser_uav_lib` in a ROS 2 lifecycle node.
 
-## Overview
+The node accepts a combined IMU stream or separate accelerometer and gyroscope streams, as used by some RealSense configurations. It filters acceleration and angular velocity; it does not estimate orientation.
 
-The main objective of this package is to improve the quality of raw IMU measurements by removing high-frequency noise and specific vibration frequencies (e.g., from motors) using digital filters.
+## Run
 
-### Key Functionalities
-1.  **Signal Conditioning:** Applies configurable IIR (Infinite Impulse Response) and Notch filters to both accelerometer and gyroscope data.
-2.  **Flexible Input Handling:** Can handle IMU data coming from a single unified topic or split between accelerometer and gyroscope topics (common in some Realsense configurations).
-3.  **Lifecycle Management:** Implemented as a managed Lifecycle Node, allowing for controlled state transitions (configure, activate, deactivate).
+For a combined IMU topic:
 
-## Provided Nodes
+```bash
+ros2 launch laser_uav_imu_filter imu_filter.launch.py   imu_data_united:=true   topic_imu_in:=/uav1/rgbd/imu   topic_imu_out:=/uav1/vio_imu/filtered
+```
 
-### 1. `imu_filter`
--   **Description:** This node subscribes to raw IMU topics, applies the configured filters using the `laser_uav_lib` filtering library, and republishes the clean data.
+For separate streams, set `imu_data_united:=false` and pass `topic_accel_in` and `topic_gyro_in`. The launch configures and activates the node automatically.
 
--   **Subscribed Topics:**
-    -   `imu_in` (`sensor_msgs/msg/Imu`):
-        Unified IMU data input (used if `imu_data_united` is `true`).
-    -   `gyro_in` (`sensor_msgs/msg/Imu`):
-        Raw gyroscope data input (used if `imu_data_united` is `false`).
-    -   `accel_in` (`sensor_msgs/msg/Imu`):
-        Raw accelerometer data input (used if `imu_data_united` is `false`).
+## Interfaces
 
--   **Published Topics:**
-    -   `imu_out` (`sensor_msgs/msg/Imu`):
-        The filtered and time-synchronized IMU data.
+Every topic uses `sensor_msgs/msg/Imu`. The node-level names can be remapped with the launch arguments below.
 
--   **Configurable Parameters:**
-    ```yaml
-    imu_filter:
-      ros__parameters:
-        # Input Data Configuration
-        # Set to true if accel and gyro arrive on the same topic ('imu_in')
-        # Set to false if they arrive on separate topics ('accel_in', 'gyro_in')
-        imu_data_united: false
+| Direction | Node topic | Launch default | Use |
+| --- | --- | --- | --- |
+| Input | `imu_in` | `/uav1/rgbd/imu` | Combined data when `imu_data_united=true`. |
+| Input | `accel_in` | `/uav1/rgbd/accel/sample` | Acceleration when `imu_data_united=false`. |
+| Input | `gyro_in` | `/uav1/rgbd/gyro/sample` | Angular velocity when `imu_data_united=false`. |
+| Output | `imu_out` | `/uav1/vio_imu/filtered` | Filtered measurements. |
 
-        # Accelerometer Filtering Configuration
-        accelerometer:
-          iir_filter:
-            enable: true
-            # Coefficients for the IIR filter (e.g., Butterworth low-pass)
-            # a: Feedback coefficients, b: Feedforward coefficients
-            a: [1.0, -0.5095]
-            b: [0.2452, 0.2452]
+In separate-stream mode, each gyroscope callback publishes a message containing the latest filtered acceleration. The output keeps the gyroscope timestamp and frame; the node does not interpolate the two streams to a common timestamp.
 
-          notch_filter:
-            enable: false
-            sample_rate: 1000 # Hz
-            frequencies: [100, 200, 300] # Frequencies to attenuate (Hz)
-            bandwidth: 100 # Stopband width (Hz)
+## Configuration
 
-        # Gyroscope Filtering Configuration
-        gyro:
-          iir_filter:
-            enable: true
-            a: [1.0, -0.7265]
-            b: [0.1367, 0.1367]
+The supplied [params/rs_d435i.yaml](params/rs_d435i.yaml) enables first-order Butterworth IIR filters and disables notch filters. Its accelerometer coefficients were designed for 100 Hz sampling with a 10 Hz cutoff; its gyroscope coefficients use 200 Hz sampling with a 10 Hz cutoff.
 
-          notch_filter:
-            enable: false
-            sample_rate: 1000 # Hz
-            frequencies: [100, 200, 300] # Hz
-            bandwidth: 100 # Hz
-    ```
+For both `accelerometer` and `gyro`, the parameter groups are:
+
+| Parameter suffix | Meaning |
+| --- | --- |
+| `iir_filter.enable` | Enables IIR filtering. |
+| `iir_filter.a` | Feedback coefficients. |
+| `iir_filter.b` | Feedforward coefficients. |
+| `notch_filter.enable` | Enables notch filtering. |
+| `notch_filter.sample_rate` | Sampling frequency in Hz; supplied value is `1000`. |
+| `notch_filter.frequencies` | Frequencies to attenuate in Hz; supplied list is `[100, 200, 300]`. |
+| `notch_filter.bandwidth` | Stopband width in Hz; supplied value is `100`. |
+
+For example, `accelerometer.iir_filter.enable` controls the accelerometer IIR filter. Set coefficients and notch frequencies for the actual sensor rate and measured vibration spectrum.
+
+The current node reads the gyroscope notch frequency list from `accelerometer.notch_filter.frequencies`. Setting `gyro.notch_filter.frequencies` alone does not change the gyroscope frequencies in this implementation.
+
+### Launch arguments
+
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `namespace` | `UAV_NAME`, or `uav1` | Node namespace. |
+| `use_sim_time` | `true` when `REAL_UAV=false` | Uses the simulation clock. |
+| `imu_filter_params_file` | Installed `params/rs_d435i.yaml` | Filter configuration file. |
+| `imu_data_united` | `True` | Combined or separate input mode. Overrides the `false` value in the supplied YAML. |
+| `topic_imu_in`, `topic_accel_in`, `topic_gyro_in` | Paths in the interface table | Input remappings. |
+| `topic_imu_out` | `/uav1/vio_imu/filtered` | Output remapping. |
+
+The default topic paths use `UAV_NAME`, falling back to `uav1`. When changing only `namespace`, also pass explicit topic arguments if their paths need to change.
